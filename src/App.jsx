@@ -94,6 +94,40 @@ const calcolaPartiteAperte = (cliente) => {
     }
 };
 
+const isExpiringNextMonth = (fineContratto) => {
+    if (!fineContratto || typeof fineContratto !== 'string' || !fineContratto.includes('/')) return false;
+    try {
+        const parts = fineContratto.split('/');
+        let mese = 0;
+        let anno = 0;
+        if (parts.length === 2) {
+            mese = parseInt(parts[0], 10);
+            anno = parseInt(parts[1], 10);
+        } else if (parts.length === 3) {
+            mese = parseInt(parts[1], 10);
+            anno = parseInt(parts[2], 10);
+        } else {
+            return false;
+        }
+
+        if (isNaN(mese) || isNaN(anno)) return false;
+        if (anno < 100) anno += 2000;
+
+        const oggi = new Date();
+        const annoCorrente = oggi.getFullYear();
+        const meseCorrente = oggi.getMonth() + 1; // 1-12
+
+        // Calcoliamo la differenza in mesi
+        const diffMesi = (anno - annoCorrente) * 12 + (mese - meseCorrente);
+        
+        // Il quadratino diventa giallo a partire dal mese prima della scadenza (diffMesi <= 1)
+        return diffMesi <= 1;
+    } catch (e) {
+        console.error("Errore calcolo scadenza contratto:", e);
+        return false;
+    }
+};
+
 // --- COMPONENTI UI (ICONE, ETC) ---
 
 // --- FUNZIONE EXPORT CSV ---
@@ -552,10 +586,19 @@ const DashboardPage = ({ user, setCurrentPage, setNotification, clienti }) => {
         };
     }, [clienti]);
 
-    const handleSpotClick = (postoId) => {
-        if (!stats.postiOccupati.has(postoId)) return;
+    // Mappa per un rapido accesso al cliente attivo associato a ciascun posto auto/container
+    const spotToClientMap = useMemo(() => {
+        const mapping = {};
+        clienti.forEach(c => {
+            if (['', 'A', 'B'].includes(c.Status || '') && c['Posto auto']) {
+                mapping[c['Posto auto']] = c;
+            }
+        });
+        return mapping;
+    }, [clienti]);
 
-        const occupier = clienti.find(c => c['Posto auto'] === postoId && ['', 'A', 'B'].includes(c.Status || ''));
+    const handleSpotClick = (postoId) => {
+        const occupier = spotToClientMap[postoId];
         if (occupier) {
             setSelectedClient(occupier);
             setIsModalOpen(true);
@@ -597,10 +640,19 @@ const DashboardPage = ({ user, setCurrentPage, setNotification, clienti }) => {
                         <h3 className="text-lg font-semibold mb-3 text-gray-700">Posti Auto</h3>
                         <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 xl:grid-cols-12 gap-2">
                             {ALL_CAR_SPOTS.map(posto => {
-                                const isOccupied = stats.postiOccupati.has(posto);
+                                const occupier = spotToClientMap[posto];
+                                const isOccupied = !!occupier;
+                                const isExpiringSoon = occupier && isExpiringNextMonth(occupier['Fine contratto']);
+                                
                                 return (
                                     <div key={posto} onClick={() => handleSpotClick(posto)}
-                                        className={`p-2 text-center rounded-md font-mono text-sm transition-transform duration-150 ${isOccupied ? 'bg-gray-400 text-white cursor-pointer hover:bg-gray-500 hover:scale-105' : 'bg-green-500 text-white'}`}>
+                                        className={`p-2 text-center rounded-md font-mono text-sm transition-transform duration-150 ${
+                                            isOccupied 
+                                                ? isExpiringSoon
+                                                    ? 'bg-yellow-500 text-white cursor-pointer hover:bg-yellow-600 hover:scale-105'
+                                                    : 'bg-gray-400 text-white cursor-pointer hover:bg-gray-500 hover:scale-105'
+                                                : 'bg-green-500 text-white'
+                                        }`}>
                                         {posto}
                                     </div>
                                 )
@@ -611,10 +663,19 @@ const DashboardPage = ({ user, setCurrentPage, setNotification, clienti }) => {
                         <h3 className="text-lg font-semibold mb-3 text-gray-700">Container</h3>
                         <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 xl:grid-cols-12 gap-2">
                             {ALL_CONTAINERS.map(posto => {
-                                const isOccupied = stats.postiOccupati.has(posto);
+                                const occupier = spotToClientMap[posto];
+                                const isOccupied = !!occupier;
+                                const isExpiringSoon = occupier && isExpiringNextMonth(occupier['Fine contratto']);
+                                
                                 return (
                                     <div key={posto} onClick={() => handleSpotClick(posto)}
-                                        className={`p-2 text-center rounded-md font-mono text-sm transition-transform duration-150 ${isOccupied ? 'bg-gray-400 text-white cursor-pointer hover:bg-gray-500 hover:scale-105' : 'bg-green-500 text-white'}`}>
+                                        className={`p-2 text-center rounded-md font-mono text-sm transition-transform duration-150 ${
+                                            isOccupied 
+                                                ? isExpiringSoon
+                                                    ? 'bg-yellow-500 text-white cursor-pointer hover:bg-yellow-600 hover:scale-105'
+                                                    : 'bg-gray-400 text-white cursor-pointer hover:bg-gray-500 hover:scale-105'
+                                                : 'bg-green-500 text-white'
+                                        }`}>
                                         {posto}
                                     </div>
                                 )
