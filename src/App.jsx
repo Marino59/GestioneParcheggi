@@ -128,6 +128,40 @@ const isExpiringNextMonth = (fineContratto) => {
     }
 };
 
+const isExpired = (fineContratto) => {
+    if (!fineContratto || typeof fineContratto !== 'string' || !fineContratto.includes('/')) return false;
+    try {
+        const parts = fineContratto.split('/');
+        let mese = 0;
+        let anno = 0;
+        if (parts.length === 2) {
+            mese = parseInt(parts[0], 10);
+            anno = parseInt(parts[1], 10);
+        } else if (parts.length === 3) {
+            mese = parseInt(parts[1], 10);
+            anno = parseInt(parts[2], 10);
+        } else {
+            return false;
+        }
+
+        if (isNaN(mese) || isNaN(anno)) return false;
+        if (anno < 100) anno += 2000;
+
+        const oggi = new Date();
+        const annoCorrente = oggi.getFullYear();
+        const meseCorrente = oggi.getMonth() + 1; // 1-12
+
+        // Calcoliamo la differenza in mesi
+        const diffMesi = (anno - annoCorrente) * 12 + (mese - meseCorrente);
+        
+        // Il contratto è scaduto se diffMesi < 0
+        return diffMesi < 0;
+    } catch (e) {
+        console.error("Errore calcolo scadenza contratto:", e);
+        return false;
+    }
+};
+
 // --- COMPONENTI UI (ICONE, ETC) ---
 
 // --- FUNZIONE EXPORT CSV ---
@@ -1035,6 +1069,28 @@ export default function App() {
 
         const unsubscribeData = onSnapshot(q, (querySnapshot) => {
             const clientList = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+
+            // Controlla e cancella automaticamente i clienti con contratto scaduto
+            const expiredClientsToCancel = clientList.filter(c => 
+                ['', 'A', 'B'].includes(c.Status || '') && isExpired(c['Fine contratto'])
+            );
+
+            if (expiredClientsToCancel.length > 0) {
+                expiredClientsToCancel.forEach(async (cliente) => {
+                    try {
+                        const docRef = doc(db, `clienti/${OWNER_UID}/records`, cliente.id);
+                        await updateDoc(docRef, { Status: 'C' });
+                    } catch (err) {
+                        console.error("Errore disattivazione automatica cliente scaduto:", err);
+                    }
+                });
+
+                const names = expiredClientsToCancel.map(c => `${c.Nome} ${c.Cognome}`).join(', ');
+                setNotification({
+                    message: `Contratto scaduto per: ${names}. Stato impostato su Cancellato (C).`,
+                    type: 'warning'
+                });
+            }
 
             const clientListWithPartite = clientList.map(cliente => ({
                 ...cliente,
