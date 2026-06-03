@@ -38,6 +38,25 @@ export const calcolaPartiteAperte = (cliente) => {
     return importo * mesi;
 };
 
+export const ricalcolaUltimoPagamento = (pagamentiRimasti) => {
+    if (!pagamentiRimasti || pagamentiRimasti.length === 0) {
+        return {
+            'Ultimo mese pagato': '',
+            'Data ultimo pagamento': '',
+            'pagamenti': []
+        };
+    }
+    const pagamentiOrdinati = [...pagamentiRimasti].sort((a, b) => 
+        parseDataOrdinabile(a.meseRiferimento) - parseDataOrdinabile(b.meseRiferimento)
+    );
+    const ultimo = pagamentiOrdinati[pagamentiOrdinati.length - 1];
+    return {
+        'Ultimo mese pagato': ultimo.meseRiferimento,
+        'Data ultimo pagamento': ultimo.data,
+        'pagamenti': pagamentiRimasti
+    };
+};
+
 export const downloadCSV = (data, filename = 'export.csv') => {
     if (!data || !data.length) return;
     const headers = ['Codice','Nome','Cognome','Status','Telefono','Posti','Importo Totale','Ultimo mese pagato','Data ultimo pagamento','Note'];

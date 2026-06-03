@@ -5,14 +5,20 @@ import ClientModal from './ClientModal.jsx';
 export default function DashboardPage({ user, setCurrentPage, setNotification, clienti }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedClient, setSelectedClient] = useState(null);
+    const [sharedSpotOccupants, setSharedSpotOccupants] = useState(null);
 
     const stats = useMemo(() => {
         const attivi = clienti.filter(c => ['', 'A', 'B'].includes(c.Status || ''));
         const inRitardo = attivi.filter(c => (c.partite_aperte || 0) > 0);
 
-        // Mappa posto -> cliente (per click)
+        // Mappa posto -> array di clienti (supporto condivisione)
         const spotMap = {};
-        attivi.forEach(c => { (c.postiAssegnati || []).forEach(p => { spotMap[p] = c; }); });
+        attivi.forEach(c => {
+            (c.postiAssegnati || []).forEach(p => {
+                if (!spotMap[p]) spotMap[p] = [];
+                spotMap[p].push(c);
+            });
+        });
         const postiOccupati = new Set(Object.keys(spotMap));
 
         return {
@@ -25,21 +31,40 @@ export default function DashboardPage({ user, setCurrentPage, setNotification, c
         };
     }, [clienti]);
 
-    const handleSpotClick = (postoId) => {
-        const c = stats.spotMap[postoId];
-        if (c) { setSelectedClient(c); setIsModalOpen(true); }
+    const handleSpotClick = (postoId, occupants) => {
+        if (occupants.length === 1) {
+            setSelectedClient(occupants[0]);
+            setIsModalOpen(true);
+        } else if (occupants.length > 1) {
+            setSharedSpotOccupants({ posto: postoId, occupants });
+        }
     };
 
     const SpotCell = ({ posto }) => {
-        const isOccupied = stats.postiOccupati.has(posto);
-        const c = stats.spotMap[posto];
-        const nPosti = c ? (c.postiAssegnati || []).length : 0;
+        const occupants = stats.spotMap[posto] || [];
+        const isOccupied = occupants.length > 0;
+        const isShared = occupants.length > 1;
+
+        let titleText = 'Libero';
+        let bgClass = 'bg-green-400 text-white';
+
+        if (isOccupied) {
+            if (isShared) {
+                titleText = `Condiviso da: ${occupants.map(o => `${o.Nome || ''} ${o.Cognome || ''}`).join(', ')}`;
+                bgClass = 'bg-purple-600 text-white cursor-pointer hover:bg-purple-700 hover:scale-105';
+            } else {
+                const c = occupants[0];
+                const nPosti = c ? (c.postiAssegnati || []).length : 0;
+                titleText = `${c.Nome} ${c.Cognome} (${nPosti} posti)`;
+                bgClass = 'bg-slate-500 text-white cursor-pointer hover:bg-slate-600 hover:scale-105';
+            }
+        }
+
         return (
             <div
-                onClick={() => handleSpotClick(posto)}
-                title={isOccupied ? `${c?.Nome} ${c?.Cognome} (${nPosti} posti)` : 'Libero'}
-                className={`p-2 text-center rounded-md font-mono text-xs transition-transform duration-150 select-none
-                    ${isOccupied ? 'bg-slate-500 text-white cursor-pointer hover:bg-slate-600 hover:scale-105' : 'bg-green-400 text-white'}`}>
+                onClick={() => isOccupied && handleSpotClick(posto, occupants)}
+                title={titleText}
+                className={`p-2 text-center rounded-md font-mono text-xs transition-transform duration-150 select-none ${bgClass}`}>
                 {posto}
             </div>
         );
@@ -83,9 +108,10 @@ export default function DashboardPage({ user, setCurrentPage, setNotification, c
             </div>
 
             {/* Legenda */}
-            <div className="flex items-center gap-6 mb-4 text-sm text-gray-600">
+            <div className="flex flex-wrap items-center gap-6 mb-4 text-sm text-gray-600">
                 <span className="flex items-center gap-2"><span className="w-4 h-4 rounded bg-green-400 inline-block"></span>Libero</span>
-                <span className="flex items-center gap-2"><span className="w-4 h-4 rounded bg-slate-500 inline-block"></span>Occupato (click per info)</span>
+                <span className="flex items-center gap-2"><span className="w-4 h-4 rounded bg-slate-500 inline-block"></span>Occupato</span>
+                <span className="flex items-center gap-2"><span className="w-4 h-4 rounded bg-purple-600 inline-block"></span>Condiviso (click per scegliere)</span>
             </div>
 
             <div className="bg-white p-6 rounded-xl shadow-md">
@@ -105,6 +131,42 @@ export default function DashboardPage({ user, setCurrentPage, setNotification, c
                     </div>
                 </div>
             </div>
+
+            {sharedSpotOccupants && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full border border-gray-100 animate-in fade-in zoom-in duration-200">
+                        <h3 className="text-lg font-bold text-gray-800 mb-1">Seleziona Cliente</h3>
+                        <p className="text-gray-500 text-xs mb-4">Il posto <span className="font-semibold text-purple-700 font-mono">{sharedSpotOccupants.posto}</span> è condiviso da:</p>
+                        <div className="space-y-2">
+                            {sharedSpotOccupants.occupants.map(c => (
+                                <button
+                                    key={c.id}
+                                    onClick={() => {
+                                        setSelectedClient(c);
+                                        setSharedSpotOccupants(null);
+                                        setIsModalOpen(true);
+                                    }}
+                                    className="w-full text-left p-3 rounded-lg border border-gray-200 hover:border-indigo-500 hover:bg-indigo-50/50 transition-all flex justify-between items-center group animate-in slide-in-from-bottom-2 duration-200"
+                                >
+                                    <div>
+                                        <span className="font-semibold text-gray-800 text-sm group-hover:text-indigo-900">{c.Nome} {c.Cognome}</span>
+                                        <span className="block text-gray-400 text-xs mt-0.5">Codice: {c.Codice || '-'}</span>
+                                    </div>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400 group-hover:text-indigo-600 transition-colors" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                            ))}
+                        </div>
+                        <button
+                            onClick={() => setSharedSpotOccupants(null)}
+                            className="mt-5 w-full py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 font-semibold text-sm transition-colors text-center"
+                        >
+                            Chiudi
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

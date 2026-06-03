@@ -1,12 +1,38 @@
-# React + Vite
+# Gestione Parcheggi
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Applicazione web per la gestione dei posti auto e container/box di una struttura di parcheggio, sviluppata in React, Vite e Firebase.
 
-Currently, two official plugins are available:
+## Caratteristiche Principali (Versione 2)
+La **Versione 2 (V2)** è l'applicazione principale attualmente attiva:
+* **Multi-assegnazione di posti**: Un singolo cliente può essere associato a più posti auto o container, ognuno con la propria quota mensile personalizzata.
+* **Pagamento Unico**: L'applicazione calcola automaticamente la somma delle quote e gestisce le scadenze e le registrazioni con un unico flusso di pagamento.
+* **Condivisione Posti**: Più clienti possono condividere lo stesso posto o box. Sulla Dashboard, i posti condivisi sono colorati in viola e cliccandoci sopra è possibile scegliere quale scheda anagrafica aprire.
+* **Storico Pagamenti e Storno**: Tracciamento di tutte le transazioni con possibilità di stornare qualsiasi pagamento errato (inclusi i record sintetici importati da V1) ripristinando in automatico lo stato precedente del cliente.
+* **Modale scrollabile**: Interfaccia ottimizzata per evitare tagli di visualizzazione su schermi di qualsiasi dimensione.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Sviluppo Locale
+1. Entra nella cartella della versione 2:
+   ```bash
+   cd v2
+   ```
+2. Installa le dipendenze:
+   ```bash
+   npm install
+   ```
+3. Avvia il server di sviluppo:
+   ```bash
+   npm run dev
+   ```
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Deploy su Firebase Hosting
+1. Compila la build di produzione della V2:
+   ```bash
+   cd v2
+   npm run build
+   ```
+2. Dalla cartella principale del progetto, effettua il deploy:
+   ```bash
+   cd ..
+   npx firebase deploy --only hosting
+   ```
+   *(La configurazione pubblica legge la directory `v2/dist` tramite il file `firebase.json`)*

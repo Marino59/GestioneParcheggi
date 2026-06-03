@@ -94,6 +94,25 @@ const calcolaPartiteAperte = (cliente) => {
     }
 };
 
+const ricalcolaUltimoPagamento = (pagamentiRimasti) => {
+    if (!pagamentiRimasti || pagamentiRimasti.length === 0) {
+        return {
+            'Ultimo mese pagato': '',
+            'Data ultimo pagamento': '',
+            'pagamenti': []
+        };
+    }
+    const pagamentiOrdinati = [...pagamentiRimasti].sort((a, b) => 
+        parseDataOrdinabile(a.meseRiferimento) - parseDataOrdinabile(b.meseRiferimento)
+    );
+    const ultimo = pagamentiOrdinati[pagamentiOrdinati.length - 1];
+    return {
+        'Ultimo mese pagato': ultimo.meseRiferimento,
+        'Data ultimo pagamento': ultimo.data,
+        'pagamenti': pagamentiRimasti
+    };
+};
+
 const isExpiringNextMonth = (fineContratto) => {
     if (!fineContratto || typeof fineContratto !== 'string' || !fineContratto.includes('/')) return false;
     try {
@@ -429,6 +448,22 @@ const PaymentModal = ({ isOpen, onClose, client, setNotification }) => {
         }
     }, [client, paymentDate, isOpen]);
 
+    // Calcolo storico dei pagamenti per visualizzazione (incluso eventuale record sintetico iniziale)
+    const storicoPagamenti = useMemo(() => {
+        if (!client) return [];
+        let list = client.pagamenti || [];
+        if (list.length === 0 && client['Ultimo mese pagato'] && client['Ultimo mese pagato'].includes('/')) {
+            list = [{
+                data: client['Data ultimo pagamento'] || '-',
+                importo: parseFloat(client['Importo mensile']) || 0,
+                meseRiferimento: client['Ultimo mese pagato'],
+                timestamp: 0,
+                isSynthetic: true
+            }];
+        }
+        // Ordina dal più recente al più vecchio per mese di riferimento
+        return [...list].sort((a, b) => parseDataOrdinabile(b.meseRiferimento) - parseDataOrdinabile(a.meseRiferimento));
+    }, [client]);
 
     if (!isOpen || !client) return null;
 
@@ -534,9 +569,32 @@ const PaymentModal = ({ isOpen, onClose, client, setNotification }) => {
         }
 
         const oggi = new Date();
+        const dataString = `${oggi.getDate().toString().padStart(2, '0')}/${(oggi.getMonth() + 1).toString().padStart(2, '0')}/${oggi.getFullYear()}`;
+        const nuovoMeseRiferimento = `${(paymentDate.month + 1).toString().padStart(2, '0')}/${paymentDate.year}`;
+
+        const nuovoPagamento = {
+            data: dataString,
+            importo: importoDaPagare,
+            meseRiferimento: nuovoMeseRiferimento,
+            timestamp: Date.now()
+        };
+
+        // Recupera la lista corrente dei pagamenti, migrando quello sintetico se necessario
+        let listaPagamenti = [...(client.pagamenti || [])];
+        if (listaPagamenti.length === 0 && client['Ultimo mese pagato'] && client['Ultimo mese pagato'].includes('/')) {
+            listaPagamenti.push({
+                data: client['Data ultimo pagamento'] || '-',
+                importo: parseFloat(client['Importo mensile']) || 0,
+                meseRiferimento: client['Ultimo mese pagato'],
+                timestamp: Date.now() - 1000 // leggermente più vecchio
+            });
+        }
+        listaPagamenti.push(nuovoPagamento);
+
         const updatedData = {
-            'Ultimo mese pagato': `${(paymentDate.month + 1).toString().padStart(2, '0')}/${paymentDate.year}`,
-            'Data ultimo pagamento': `${oggi.getDate().toString().padStart(2, '0')}/${(oggi.getMonth() + 1).toString().padStart(2, '0')}/${oggi.getFullYear()}`
+            'Ultimo mese pagato': nuovoMeseRiferimento,
+            'Data ultimo pagamento': dataString,
+            'pagamenti': listaPagamenti
         };
 
         try {
@@ -550,28 +608,109 @@ const PaymentModal = ({ isOpen, onClose, client, setNotification }) => {
         }
     };
 
+    const handleDeletePayment = async (paymentToDelete) => {
+        if (!window.confirm(`Sei sicuro di voler stornare/cancellare il pagamento per ${formattaDataMeseAnno(paymentToDelete.meseRiferimento)}?`)) {
+            return;
+        }
+
+        let listaPagamenti = [...(client.pagamenti || [])];
+        if (listaPagamenti.length === 0 && client['Ultimo mese pagato'] && client['Ultimo mese pagato'].includes('/')) {
+            listaPagamenti.push({
+                data: client['Data ultimo pagamento'] || '-',
+                importo: parseFloat(client['Importo mensile']) || 0,
+                meseRiferimento: client['Ultimo mese pagato'],
+                timestamp: Date.now() - 1000
+            });
+        }
+
+        const nuovaLista = listaPagamenti.filter(p => p.timestamp !== paymentToDelete.timestamp);
+        const updatedFields = ricalcolaUltimoPagamento(nuovaLista);
+
+        try {
+            const docRef = doc(db, `clienti/${OWNER_UID}/records`, client.id);
+            await updateDoc(docRef, updatedFields);
+            setNotification({ message: "Pagamento stornato con successo!", type: 'success' });
+        } catch (error) {
+            console.error("Errore storno pagamento:", error);
+            setNotification({ message: `Errore nello storno: ${error.message}`, type: 'error' });
+        }
+    };
+
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-40 p-4 animate-fade-in-fast">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
                 <div className="p-6">
                     <h2 className="text-2xl font-bold mb-2 text-gray-800">Registra Pagamento</h2>
                     <p className="text-gray-600 mb-4">{client.Nome} {client.Cognome}</p>
-                    <div className="bg-gray-100 p-3 rounded-lg mb-4 text-center">
-                        <p className="text-sm text-gray-500">Ultimo mese pagato</p>
-                        <p className="font-bold text-lg text-gray-800">{formattaDataMeseAnno(client['Ultimo mese pagato'])}</p>
+                    
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="bg-gray-100 p-3 rounded-lg text-center">
+                            <p className="text-xs text-gray-500">Ultimo mese pagato</p>
+                            <p className="font-bold text-base text-gray-800">{formattaDataMeseAnno(client['Ultimo mese pagato'])}</p>
+                        </div>
+                        <div className="bg-gray-100 p-3 rounded-lg text-center">
+                            <p className="text-xs text-gray-500">Data reg. pagamento</p>
+                            <p className="font-bold text-base text-gray-800">{client['Data ultimo pagamento'] || '-'}</p>
+                        </div>
                     </div>
+
                     <p className="text-center text-sm font-medium text-gray-500 mt-6 mb-2">Seleziona il mese da pagare</p>
                     <div className="flex items-center justify-center space-x-4 my-2">
                         <button onClick={() => changeMonth(-1)} className="p-2 rounded-full bg-gray-200 hover:bg-gray-300 transition-colors">&larr;</button>
                         <span className="text-xl font-semibold text-gray-800 w-48 text-center">{`${NOMI_MESI[paymentDate.month]} ${paymentDate.year}`}</span>
                         <button onClick={() => changeMonth(1)} className="p-2 rounded-full bg-gray-200 hover:bg-gray-300 transition-colors">&rarr;</button>
                     </div>
+
                     {/* NUOVO BLOCCO PER L'IMPORTO DINAMICO */}
                     <div className="mt-6 p-4 bg-blue-50 border-2 border-dashed border-blue-200 rounded-lg text-center">
                         <p className="text-sm font-medium text-blue-700">Importo Totale per il Periodo</p>
                         <p className="text-4xl font-bold text-blue-800 mt-1">
                             €{importoDaPagare.toFixed(2)}
                         </p>
+                    </div>
+
+                    {/* STORICO PAGAMENTI */}
+                    <div className="mt-6 border-t pt-4">
+                        <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            Storico Pagamenti
+                        </h3>
+                        <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-md">
+                            {storicoPagamenti.length === 0 ? (
+                                <p className="text-xs text-gray-500 text-center py-4">Nessun pagamento registrato.</p>
+                            ) : (
+                                <table className="w-full text-left border-collapse text-xs">
+                                    <thead>
+                                        <tr className="bg-gray-50 border-b border-gray-200">
+                                            <th className="p-2 text-gray-600 font-medium">Data</th>
+                                            <th className="p-2 text-gray-600 font-medium">Mese Rif.</th>
+                                            <th className="p-2 text-gray-600 font-medium text-right">Importo</th>
+                                            <th className="p-2 text-center text-gray-600 font-medium"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        {storicoPagamenti.map((p, idx) => (
+                                            <tr key={p.timestamp || idx} className="hover:bg-gray-50">
+                                                <td className="p-2 text-gray-700">{p.data}</td>
+                                                <td className="p-2 text-gray-700 font-medium">{formattaDataMeseAnno(p.meseRiferimento)}</td>
+                                                <td className="p-2 text-gray-700 text-right font-semibold">€{parseFloat(p.importo || 0).toFixed(2)}</td>
+                                                <td className="p-2 text-center">
+                                                    {!p.isSynthetic && (
+                                                        <button type="button" onClick={() => handleDeletePayment(p)} className="p-1 text-red-500 hover:text-red-700 rounded-md hover:bg-red-50 transition-colors" title="Cancella Pagamento">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                            </svg>
+                                                        </button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
                     </div>
                 </div>
                 <div className="bg-gray-50 px-6 py-4 flex justify-between gap-3">

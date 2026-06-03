@@ -1,28 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { collection, doc, setDoc, addDoc, getDocs, writeBatch } from 'firebase/firestore';
 import { db, OWNER_UID } from './firebase.js';
-import { ALL_CAR_SPOTS, ALL_CONTAINERS } from './utils.js';
+import { ALL_CAR_SPOTS, ALL_CONTAINERS, formattaDataMeseAnno, parseDataOrdinabile } from './utils.js';
 import { SpotBadge } from './components.jsx';
 
 const COLLECTION = `clienti_v2/${OWNER_UID}/records`;
 
 // Griglia di selezione posti
-const SpotGrid = ({ title, spots, selectedSpots, importiPosti, onToggle, onImportoChange, occupiedByOthers }) => (
+const SpotGrid = ({ title, spots, selectedSpots, importiPosti, onToggle, onImportoChange, spotOccupants }) => (
     <div>
         <h4 className="text-sm font-semibold text-gray-600 uppercase tracking-wider mb-2">{title}</h4>
         <div className="grid grid-cols-5 sm:grid-cols-7 gap-1.5 mb-3">
             {spots.map(s => {
                 const isSelected = selectedSpots.includes(s);
-                const isOccupied = occupiedByOthers.includes(s);
+                const occupants = spotOccupants[s] || [];
+                const isOccupied = occupants.length > 0;
                 return (
                     <button
                         key={s} type="button"
-                        onClick={() => !isOccupied && onToggle(s)}
-                        title={isOccupied ? `Occupato da altro cliente` : s}
-                        className={`p-1.5 text-center rounded font-mono text-xs font-semibold transition-all
-                            ${isSelected ? 'bg-indigo-600 text-white ring-2 ring-indigo-400 scale-105' :
-                            isOccupied ? 'bg-gray-300 text-gray-400 cursor-not-allowed' :
-                            'bg-gray-100 text-gray-700 hover:bg-indigo-100 hover:text-indigo-800'}`}>
+                        onClick={() => onToggle(s)}
+                        title={isOccupied ? `Occupato da: ${occupants.join(', ')} (Clicca per condividere)` : s}
+                        className={`p-1.5 text-center rounded font-mono text-xs font-semibold transition-all border
+                            ${isSelected ? 'bg-indigo-600 text-white border-indigo-600 ring-2 ring-indigo-400 scale-105' :
+                            isOccupied ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 hover:text-amber-900' :
+                            'bg-gray-100 text-gray-700 border-transparent hover:bg-indigo-100 hover:text-indigo-800'}`}>
                         {s}
                     </button>
                 );
@@ -71,13 +72,40 @@ export default function ClientModal({ isOpen, onClose, clientToEdit, setNotifica
         }
     }, [clientToEdit, isOpen]);
 
-    if (!isOpen) return null;
+    // Mappa dei posti occupati dagli altri clienti con i loro nomi
+    const spotOccupants = useMemo(() => {
+        const mapping = {};
+        (allClienti || [])
+            .filter(c => c.id !== (clientToEdit?.id))
+            .filter(c => ['', 'A', 'B'].includes(c.Status || ''))
+            .forEach(c => {
+                const nomeCompleto = `${c.Nome || ''} ${c.Cognome || ''}`.trim() || `Codice ${c.Codice || 'Senza Codice'}`;
+                (c.postiAssegnati || []).forEach(p => {
+                    if (!mapping[p]) mapping[p] = [];
+                    mapping[p].push(nomeCompleto);
+                });
+            });
+        return mapping;
+    }, [allClienti, clientToEdit]);
 
-    // Posti occupati da ALTRI clienti (non dal cliente corrente)
-    const occupiedByOthers = (allClienti || [])
-        .filter(c => c.id !== (clientToEdit?.id))
-        .filter(c => ['', 'A', 'B'].includes(c.Status || ''))
-        .flatMap(c => c.postiAssegnati || []);
+    const sharedSpots = selectedSpots.filter(s => spotOccupants[s] && spotOccupants[s].length > 0);
+
+    const storicoPagamenti = useMemo(() => {
+        if (!clientToEdit) return [];
+        let list = clientToEdit.pagamenti || [];
+        if (list.length === 0 && clientToEdit['Ultimo mese pagato'] && clientToEdit['Ultimo mese pagato'].includes('/')) {
+            list = [{
+                data: clientToEdit['Data ultimo pagamento'] || '-',
+                importo: parseFloat(clientToEdit.importoTotale) || 0,
+                meseRiferimento: clientToEdit['Ultimo mese pagato'],
+                timestamp: 0,
+                isSynthetic: true
+            }];
+        }
+        return [...list].sort((a, b) => parseDataOrdinabile(b.meseRiferimento) - parseDataOrdinabile(a.meseRiferimento));
+    }, [clientToEdit]);
+
+    if (!isOpen) return null;
 
     const toggleSpot = (s) => {
         setSelectedSpots(prev => {
@@ -213,8 +241,30 @@ export default function ClientModal({ isOpen, onClose, clientToEdit, setNotifica
                                 )}
                             </div>
                             {selectedSpots.length > 0 && (
-                                <div className="flex flex-wrap gap-1.5 mb-3 p-2 bg-indigo-50 rounded-lg">
-                                    {selectedSpots.map(s => <SpotBadge key={s} codice={s} />)}
+                                <div className="flex flex-wrap gap-1.5 mb-3 p-2 bg-indigo-50 rounded-lg items-center">
+                                    <span className="text-xs text-indigo-500 font-medium mr-1">Selezionati (clicca per rimuovere):</span>
+                                    {selectedSpots.map(s => (
+                                        <button
+                                            key={s} type="button"
+                                            onClick={() => toggleSpot(s)}
+                                            className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-600 text-white hover:bg-red-500 transition-colors group"
+                                            title={`Rimuovi ${s}`}
+                                        >
+                                            <span>{s}</span>
+                                            <span className="opacity-60 group-hover:opacity-100">✕</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                            {sharedSpots.length > 0 && (
+                                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs flex items-start gap-2.5 shadow-sm">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                    </svg>
+                                    <div>
+                                        <p className="font-semibold text-amber-900 mb-0.5">Posti Condivisi</p>
+                                        <p>I seguenti posti sono già assegnati ad altri clienti: {sharedSpots.map(s => `${s} (con ${spotOccupants[s].join(', ')})`).join(', ')}</p>
+                                    </div>
                                 </div>
                             )}
                             <SpotGrid
@@ -224,7 +274,7 @@ export default function ClientModal({ isOpen, onClose, clientToEdit, setNotifica
                                 importiPosti={importiPosti}
                                 onToggle={toggleSpot}
                                 onImportoChange={handleImportoChange}
-                                occupiedByOthers={occupiedByOthers}
+                                spotOccupants={spotOccupants}
                             />
                             <SpotGrid
                                 title="Container / Box"
@@ -233,9 +283,45 @@ export default function ClientModal({ isOpen, onClose, clientToEdit, setNotifica
                                 importiPosti={importiPosti}
                                 onToggle={toggleSpot}
                                 onImportoChange={handleImportoChange}
-                                occupiedByOthers={occupiedByOthers}
+                                spotOccupants={spotOccupants}
                             />
                         </div>
+
+                        {/* Storico pagamenti in sola lettura */}
+                        {clientToEdit?.id && (
+                            <div className="border-t pt-6">
+                                <h3 className="text-base font-semibold text-gray-700 mb-3 flex items-center gap-1.5">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    Storico Pagamenti (Sola Lettura)
+                                </h3>
+                                <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg shadow-sm">
+                                    {storicoPagamenti.length === 0 ? (
+                                        <p className="text-xs text-gray-400 text-center py-4">Nessun pagamento registrato</p>
+                                    ) : (
+                                        <table className="w-full text-left border-collapse text-xs">
+                                            <thead>
+                                                <tr className="bg-gray-50 border-b">
+                                                    <th className="p-2 text-gray-500 font-medium font-semibold">Data Reg.</th>
+                                                    <th className="p-2 text-gray-500 font-medium font-semibold">Mese Riferimento</th>
+                                                    <th className="p-2 text-gray-500 font-medium font-semibold text-right">Importo</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-100">
+                                                {storicoPagamenti.map((p, idx) => (
+                                                    <tr key={p.timestamp || idx} className="hover:bg-gray-50">
+                                                        <td className="p-2 text-gray-600">{p.data}</td>
+                                                        <td className="p-2 text-gray-700 font-medium">{formattaDataMeseAnno(p.meseRiferimento)}</td>
+                                                        <td className="p-2 text-gray-800 text-right font-semibold">€{parseFloat(p.importo || 0).toFixed(2)}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="bg-gray-50 px-6 py-4 flex justify-end gap-3 rounded-b-xl border-t">
